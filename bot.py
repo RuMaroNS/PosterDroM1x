@@ -1,21 +1,24 @@
 import os
 import asyncio
 import re
-import aiohttp
 from aiogram import Bot, Dispatcher, F, types
 from aiogram.filters import CommandStart
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
-# Бот читает токен из секретов GitHub (или берет запасной, если запущен локально)
+# Бот берет токен из переменной окружения BOT_TOKEN (GitHub Secrets / Render / OS)
+# Если запускаешь локально, можешь вписать токен вторым аргументом в os.getenv()
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
+# Хранилище распарсенных паков в памяти (in-memory)
 USER_PACKS = {}
-ITEMS_PER_PAGE = 5
+ITEMS_PER_PAGE = 5  # Количество эмодзи на 1 страницу
+
 
 def build_page_text(pack_title: str, emojis: list, page: int) -> str:
+    """Форматирует текст сообщения с таблицей эмодзи."""
     total_pages = (len(emojis) + ITEMS_PER_PAGE - 1) // ITEMS_PER_PAGE
     start_idx = page * ITEMS_PER_PAGE
     end_idx = start_idx + ITEMS_PER_PAGE
@@ -33,7 +36,9 @@ def build_page_text(pack_title: str, emojis: list, page: int) -> str:
 
     return text
 
+
 def build_keyboard(page: int, total_items: int, pack_short_name: str) -> InlineKeyboardMarkup:
+    """Создает кнопки навигации (Назад / Стр / Вперед)."""
     total_pages = (total_items + ITEMS_PER_PAGE - 1) // ITEMS_PER_PAGE
     buttons = []
 
@@ -54,6 +59,7 @@ def build_keyboard(page: int, total_items: int, pack_short_name: str) -> InlineK
     buttons.append([prev_btn, page_btn, next_btn])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
+
 @dp.message(CommandStart())
 async def start_cmd(message: types.Message):
     await message.answer(
@@ -62,41 +68,40 @@ async def start_cmd(message: types.Message):
         parse_mode="Markdown"
     )
 
+
 @dp.message(F.text)
 async def handle_pack_link(message: types.Message):
     text = message.text.strip()
 
+    # Вытаскиваем short_name из ссылки
     match = re.search(r"(?:addemoji|addstickers)/([a-zA-Z0-9_]+)", text)
     if not match:
-        await message.answer("❌ Отправьте корректную ссылку на эмодзипак/стикерпак.")
+        await message.answer("❌ Отправьте корректную ссылку на эмодзипак или стикерпак.")
         return
 
     short_name = match.group(1)
 
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/getStickerSet?sticker_set_name={short_name}"
-
-    async with aiohttp.ClientSession() as session:
-        async with session.get(url) as resp:
-            data = await resp.json()
-
-    if not data.get("ok"):
-        await message.answer("⚠️ Не удалось найти пак по этой ссылке.")
+    try:
+        # Используем родной метод Bot API из aiogram
+        sticker_set = await bot.get_sticker_set(name=short_name)
+    except Exception as e:
+        await message.answer(f"⚠️ Не удалось найти пак по этой ссылке.\nОшибка: {e}")
         return
 
-    result = data["result"]
-    title = result.get("title", short_name)
-    stickers = result.get("stickers", [])
+    title = sticker_set.title
+    stickers = sticker_set.stickers
 
     parsed_emojis = []
     for s in stickers:
-        emoji_id = s.get("custom_emoji_id") or s.get("file_id")
-        alt = s.get("emoji", "❓")
+        emoji_id = s.custom_emoji_id or s.file_id
+        alt = s.emoji or "❓"
         parsed_emojis.append({"id": emoji_id, "alt": alt})
 
     if not parsed_emojis:
         await message.answer("❌ В этом паке не найдено элементов.")
         return
 
+    # Сохраняем в кэш
     USER_PACKS[short_name] = {"title": title, "emojis": parsed_emojis}
 
     response_text = build_page_text(title, parsed_emojis, 0)
@@ -104,9 +109,11 @@ async def handle_pack_link(message: types.Message):
 
     await message.answer(response_text, reply_markup=keyboard, parse_mode="HTML")
 
+
 @dp.callback_query(F.data == "noop")
 async def noop_handler(callback: types.CallbackQuery):
     await callback.answer()
+
 
 @dp.callback_query(F.data.startswith("page:"))
 async def pagination_handler(callback: types.CallbackQuery):
@@ -127,9 +134,11 @@ async def pagination_handler(callback: types.CallbackQuery):
     await callback.message.edit_text(response_text, reply_markup=keyboard, parse_mode="HTML")
     await callback.answer()
 
+
 async def main():
-    print("🤖 Бот успешно запущен на GitHub Actions!")
+    print("🤖 Бот успешно запущен!")
     await dp.start_polling(bot)
+
 
 if __name__ == "__main__":
     asyncio.run(main())
