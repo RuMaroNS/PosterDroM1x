@@ -21,7 +21,7 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(storage=MemoryStorage())
 
-# Хранилище распарсенных паков в памяти
+# Хранилище паков в памяти
 USER_PACKS = {}
 ITEMS_PER_PAGE = 10
 
@@ -35,7 +35,7 @@ class BotStates(StatesGroup):
 
 # ================= КЛАВИАТУРЫ =================
 def main_menu_keyboard():
-    """Главная клавиатура бота."""
+    """Главное меню."""
     return ReplyKeyboardMarkup(
         keyboard=[
             [KeyboardButton(text="➕ Добавить эмодзи пак")],
@@ -46,7 +46,7 @@ def main_menu_keyboard():
 
 
 def build_pack_page(title: str, emojis: list, page: int, pack_name: str):
-    """Формирует текст и инлайн-клавиатуру для просмотра эмодзи из пака."""
+    """Формирует список эмодзи с кнопками для копирования."""
     total_pages = (len(emojis) + ITEMS_PER_PAGE - 1) // ITEMS_PER_PAGE
     start_idx = page * ITEMS_PER_PAGE
     end_idx = start_idx + ITEMS_PER_PAGE
@@ -56,6 +56,7 @@ def build_pack_page(title: str, emojis: list, page: int, pack_name: str):
     text += f"📖 <b>Страница:</b> {page + 1} из {total_pages}\n"
     text += "💡 <i>Нажмите на кнопку ниже, чтобы быстро скопировать ID эмодзи!</i>\n"
     text += "⎯" * 20 + "\n\n"
+    text += "<b>Символ | emoji-id</b>\n"
 
     inline_keyboard = []
     emoji_row = []
@@ -66,19 +67,16 @@ def build_pack_page(title: str, emojis: list, page: int, pack_name: str):
         is_custom = item["is_custom"]
 
         if is_custom and emoji_id:
-            # Текст в списке
-            text += f'• <tg-emoji custom_emoji_id="{emoji_id}">{alt}</tg-emoji> | <code>{alt}</code> | <code>{emoji_id}</code>\n'
-            # Кнопка с премиум-эмодзи и callback c его ID
+            text += f"• {alt} ➔ <code>{emoji_id}</code>\n"
             btn_text = alt
             cb_data = f"copy:{emoji_id}"
         else:
-            text += f"• 🖼 {alt} | <code>{alt}</code> | <i>(Не кастомный)</i>\n"
+            text += f"• 🖼 {alt} ➔ <i>(Обычный стикер)</i>\n"
             btn_text = f"🖼 {alt}"
             cb_data = "noop"
 
         emoji_row.append(InlineKeyboardButton(text=btn_text, callback_data=cb_data))
 
-        # Группируем кнопки по 5 в ряд
         if len(emoji_row) == 5:
             inline_keyboard.append(emoji_row)
             emoji_row = []
@@ -86,7 +84,7 @@ def build_pack_page(title: str, emojis: list, page: int, pack_name: str):
     if emoji_row:
         inline_keyboard.append(emoji_row)
 
-    # Кнопки навигации по страницам
+    # Навигация
     nav_row = []
     if page > 0:
         nav_row.append(InlineKeyboardButton(text="⬅️ Назад", callback_data=f"page:{pack_name}:{page - 1}"))
@@ -109,7 +107,6 @@ def build_pack_page(title: str, emojis: list, page: int, pack_name: str):
 @dp.message.outer_middleware()
 @dp.callback_query.outer_middleware()
 async def admin_check_middleware(handler, event, data):
-    """Пропускает только владельца бота."""
     user = data.get("event_from_user")
     if not user or user.id != ADMIN_ID:
         if isinstance(event, types.Message):
@@ -125,13 +122,13 @@ async def admin_check_middleware(handler, event, data):
 async def cmd_start(message: types.Message, state: FSMContext):
     await state.clear()
     await message.answer(
-        f"👋 Привет, Владелец!\nВоспользуйся меню ниже для работы с паками и публикацией постов.",
+        "👋 Привет, Владелец!\nВоспользуйся меню ниже для работы с паками и публикацией постов.",
         reply_markup=main_menu_keyboard(),
         parse_mode="HTML",
     )
 
 
-# --- Секция 1: Добавление и парсинг эмодзи пака ---
+# --- Добавление паков ---
 @dp.message(F.text == "➕ Добавить эмодзи пак")
 async def start_add_pack(message: types.Message, state: FSMContext):
     await state.set_state(BotStates.waiting_for_pack_link)
@@ -203,7 +200,7 @@ async def handle_pagination(callback: types.CallbackQuery):
 
 @dp.callback_query(F.data.startswith("copy:"))
 async def handle_copy_id(callback: types.CallbackQuery):
-    """Выплевывает отдельный моноширинный ID для моментального копирования по клику."""
+    """Отправляет чистый ID для копирования в 1 клик."""
     emoji_id = callback.data.split(":")[1]
     await callback.message.answer(f"<code>{emoji_id}</code>", parse_mode="HTML")
     await callback.answer("ID отправлен ниже!")
@@ -214,7 +211,7 @@ async def handle_noop(callback: types.CallbackQuery):
     await callback.answer()
 
 
-# --- Секция 2: Создание поста и проверка админки в канале ---
+# --- Создание постов ---
 @dp.message(F.text == "📝 Сделать пост")
 async def start_create_post(message: types.Message, state: FSMContext):
     await state.set_state(BotStates.waiting_for_channel)
@@ -230,7 +227,6 @@ async def start_create_post(message: types.Message, state: FSMContext):
 async def process_channel_input(message: types.Message, state: FSMContext):
     channel_id = None
 
-    # Если переслано сообщение из канала
     if message.forward_from_chat:
         channel_id = message.forward_from_chat.id
     else:
@@ -242,14 +238,12 @@ async def process_channel_input(message: types.Message, state: FSMContext):
         await message.answer("❌ Не удалось определить канал. Перешлите сообщение из канала или укажите `@username`.")
         return
 
-    # Проверяем, есть ли бот в канале и является ли он администратором
     try:
         chat_member = await bot.get_chat_member(chat_id=channel_id, user_id=bot.id)
         if chat_member.status not in ["administrator", "creator"]:
-            await message.answer("⚠️ Бот **не является администратором** в этом канале! Добавьте бота в канал и дайте ему права на публикацию сообщений.", parse_mode="Markdown")
+            await message.answer("⚠️ Бот **не является администратором** в этом канале!", parse_mode="Markdown")
             return
 
-        # Проверяем права на отправку
         if hasattr(chat_member, "can_post_messages") and not chat_member.can_post_messages:
             await message.answer("⚠️ У бота нет разрешения **'Публикация сообщений'** в этом канале.")
             return
@@ -266,8 +260,8 @@ async def process_channel_input(message: types.Message, state: FSMContext):
 
     await message.answer(
         "✅ <b>Канал успешно подтвержден!</b>\n\n"
-        "Теперь отправьте текст или медиафайл поста. Вы можете использовать HTML-теги и премиум эмодзи:\n"
-        "<code>&lt;tg-emoji custom_emoji_id=\"АЙДИ\"&gt;😀&lt;/tg-emoji&gt;</code>",
+        "Теперь отправьте текст или медиафайл поста. Для премиум эмодзи используйте тег:\n"
+        "<code>&lt;tg-emoji emoji-id=\"АЙДИ\"&gt;😀&lt;/tg-emoji&gt;</code>",
         parse_mode="HTML",
     )
 
@@ -278,8 +272,20 @@ async def publish_post(message: types.Message, state: FSMContext):
     channel_id = data.get("target_channel")
 
     try:
-        # Копируем сообщение целиком (с сохранением разметки, медиафайлов и эмодзи) в канал
-        await message.copy_to(chat_id=channel_id)
+        # Если отправлен просто текст, отправляем через send_message с HTML-парсингом
+        if message.text:
+            await bot.send_message(
+                chat_id=channel_id,
+                text=message.text,
+                parse_mode="HTML"
+            )
+        else:
+            # Для медиа с подписью
+            await message.copy_to(
+                chat_id=channel_id,
+                parse_mode="HTML"
+            )
+
         await message.answer("🚀 <b>Пост успешно опубликован в канал!</b>", parse_mode="HTML")
     except Exception as e:
         await message.answer(f"❌ Не удалось опубликовать пост в канал.\nОшибка: `{e}`", parse_mode="Markdown")
