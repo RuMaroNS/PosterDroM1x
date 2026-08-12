@@ -1,3 +1,4 @@
+import os
 import asyncio
 import re
 import aiohttp
@@ -5,16 +6,14 @@ from aiogram import Bot, Dispatcher, F, types
 from aiogram.filters import CommandStart
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
-# 🔑 Токен вашего бота
-BOT_TOKEN = "8734630843:AAFH-0gQa9EBbD_oDTBLFwemGVk9GK9BEis"
+# Бот читает токен из секретов GitHub (или берет запасной, если запущен локально)
+BOT_TOKEN = os.getenv("BOT_TOKEN")
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
-# Хранилище распарсенных паков в памяти (in-memory)
 USER_PACKS = {}
-ITEMS_PER_PAGE = 5  # Количество элементов на одной странице таблицы
-
+ITEMS_PER_PAGE = 5
 
 def build_page_text(pack_title: str, emojis: list, page: int) -> str:
     total_pages = (len(emojis) + ITEMS_PER_PAGE - 1) // ITEMS_PER_PAGE
@@ -33,7 +32,6 @@ def build_page_text(pack_title: str, emojis: list, page: int) -> str:
         text += f'• <tg-emoji custom_emoji_id="{emoji_id}">{alt}</tg-emoji> | <code>{alt}</code> | <code>{emoji_id}</code>\n'
 
     return text
-
 
 def build_keyboard(page: int, total_items: int, pack_short_name: str) -> InlineKeyboardMarkup:
     total_pages = (total_items + ITEMS_PER_PAGE - 1) // ITEMS_PER_PAGE
@@ -56,7 +54,6 @@ def build_keyboard(page: int, total_items: int, pack_short_name: str) -> InlineK
     buttons.append([prev_btn, page_btn, next_btn])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
-
 @dp.message(CommandStart())
 async def start_cmd(message: types.Message):
     await message.answer(
@@ -65,12 +62,10 @@ async def start_cmd(message: types.Message):
         parse_mode="Markdown"
     )
 
-
 @dp.message(F.text)
 async def handle_pack_link(message: types.Message):
     text = message.text.strip()
 
-    # Извлекаем short_name из ссылок t.me/addemoji/... или t.me/addstickers/...
     match = re.search(r"(?:addemoji|addstickers)/([a-zA-Z0-9_]+)", text)
     if not match:
         await message.answer("❌ Отправьте корректную ссылку на эмодзипак/стикерпак.")
@@ -85,7 +80,7 @@ async def handle_pack_link(message: types.Message):
             data = await resp.json()
 
     if not data.get("ok"):
-        await message.answer("⚠️ Не удалось найти пак по этой ссылке. Убедитесь, что ссылка правильная.")
+        await message.answer("⚠️ Не удалось найти пак по этой ссылке.")
         return
 
     result = data["result"]
@@ -109,11 +104,9 @@ async def handle_pack_link(message: types.Message):
 
     await message.answer(response_text, reply_markup=keyboard, parse_mode="HTML")
 
-
 @dp.callback_query(F.data == "noop")
 async def noop_handler(callback: types.CallbackQuery):
     await callback.answer()
-
 
 @dp.callback_query(F.data.startswith("page:"))
 async def pagination_handler(callback: types.CallbackQuery):
@@ -134,11 +127,9 @@ async def pagination_handler(callback: types.CallbackQuery):
     await callback.message.edit_text(response_text, reply_markup=keyboard, parse_mode="HTML")
     await callback.answer()
 
-
 async def main():
-    print("🤖 Бот успешно запущен и ждет ссылок!")
+    print("🤖 Бот успешно запущен на GitHub Actions!")
     await dp.start_polling(bot)
-
 
 if __name__ == "__main__":
     asyncio.run(main())
